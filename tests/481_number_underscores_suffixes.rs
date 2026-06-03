@@ -1,4 +1,7 @@
-use ron::Number;
+use ron::{
+    ser::{IntegerRadix, PrettyConfig},
+    Number,
+};
 
 #[test]
 #[allow(clippy::unusual_byte_groupings)]
@@ -229,6 +232,94 @@ fn value_number_suffix_roundtrip() {
     test_min_max! { i8, i16, i32, i64, u8, u16, u32, u64, f32, f64 }
     #[cfg(feature = "integer128")]
     test_min_max! { i128, u128 }
+}
+
+#[test]
+fn ser_integer_radix() {
+    assert_eq!(
+        ron::ser::to_string_pretty(&-42i32, PrettyConfig::default()).unwrap(),
+        "-42"
+    );
+
+    let binary = PrettyConfig::default().integer_radix(IntegerRadix::Binary);
+    assert_eq!(
+        ron::ser::to_string_pretty(&42u8, binary).unwrap(),
+        "0b101010"
+    );
+    assert_eq!(ron::from_str::<u8>("0b101010").unwrap(), 42);
+
+    let octal = PrettyConfig::default().integer_radix(IntegerRadix::Octal);
+    assert_eq!(ron::ser::to_string_pretty(&42u8, octal).unwrap(), "0o52");
+    assert_eq!(ron::from_str::<u8>("0o52").unwrap(), 42);
+
+    let hex = PrettyConfig::default().integer_radix(IntegerRadix::Hexadecimal);
+    assert_eq!(
+        ron::ser::to_string_pretty(&42u32, hex.clone()).unwrap(),
+        "0x2a"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&42i32, hex.clone()).unwrap(),
+        "0x2a"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&-42i32, hex.clone()).unwrap(),
+        "-0x2a"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&i64::MIN, hex.clone()).unwrap(),
+        "-0x8000000000000000"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&u64::MAX, hex.clone()).unwrap(),
+        "0xffffffffffffffff"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&ron::Value::Number(Number::I32(-42)), hex.clone()).unwrap(),
+        "-0x2a"
+    );
+    assert_eq!(ron::from_str::<u32>("0x2a").unwrap(), 42);
+    assert_eq!(ron::from_str::<i32>("-0x2a").unwrap(), -42);
+    assert_eq!(
+        ron::from_str::<i64>("-0x8000000000000000").unwrap(),
+        i64::MIN
+    );
+    assert_eq!(
+        ron::from_str::<u64>("0xffffffffffffffff").unwrap(),
+        u64::MAX
+    );
+
+    let hex_with_suffixes = hex.number_suffixes(true);
+    assert_eq!(
+        ron::ser::to_string_pretty(&42u32, hex_with_suffixes.clone()).unwrap(),
+        "0x2au32"
+    );
+    assert_eq!(
+        ron::ser::to_string_pretty(&-42i32, hex_with_suffixes).unwrap(),
+        "-0x2ai32"
+    );
+    assert_eq!(ron::from_str::<u32>("0x2au32").unwrap(), 42);
+    assert_eq!(ron::from_str::<i32>("-0x2ai32").unwrap(), -42);
+
+    #[cfg(feature = "integer128")]
+    {
+        let hex = PrettyConfig::default().integer_radix(IntegerRadix::Hexadecimal);
+        assert_eq!(
+            ron::ser::to_string_pretty(&i128::MIN, hex.clone()).unwrap(),
+            "-0x80000000000000000000000000000000"
+        );
+        assert_eq!(
+            ron::ser::to_string_pretty(&u128::MAX, hex).unwrap(),
+            "0xffffffffffffffffffffffffffffffff"
+        );
+        assert_eq!(
+            ron::from_str::<i128>("-0x80000000000000000000000000000000").unwrap(),
+            i128::MIN
+        );
+        assert_eq!(
+            ron::from_str::<u128>("0xffffffffffffffffffffffffffffffff").unwrap(),
+            u128::MAX
+        );
+    }
 }
 
 fn check_number_roundtrip<

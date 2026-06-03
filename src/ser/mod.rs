@@ -118,8 +118,24 @@ pub struct PrettyConfig {
     pub compact_maps: bool,
     /// Enable explicit number type suffixes like `1u16`
     pub number_suffixes: bool,
+    /// Configure the radix used to serialize integers
+    pub integer_radix: IntegerRadix,
     /// Additional path-based field metadata to serialize
     pub path_meta: Option<path_meta::Field>,
+}
+
+/// Integer radix used by [`PrettyConfig`] when serializing integers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntegerRadix {
+    /// Serialize integers as decimal literals, e.g. `42`.
+    #[default]
+    Decimal,
+    /// Serialize integers as binary literals, e.g. `0b101010`.
+    Binary,
+    /// Serialize integers as octal literals, e.g. `0o52`.
+    Octal,
+    /// Serialize integers as hexadecimal literals, e.g. `0x2a`.
+    Hexadecimal,
 }
 
 impl PrettyConfig {
@@ -348,6 +364,32 @@ impl PrettyConfig {
 
         self
     }
+
+    /// Configures the radix used to serialize integers.
+    ///
+    /// This only affects integer literals; floating point values are always
+    /// serialized in decimal notation.
+    ///
+    /// When set to [`IntegerRadix::Hexadecimal`], the integer `42u16` will
+    /// serialize to
+    /// ```ignore
+    /// 0x2a
+    /// # ;
+    /// ```
+    ///
+    /// With [`PrettyConfig::number_suffixes`] also enabled, it will serialize to
+    /// ```ignore
+    /// 0x2au16
+    /// # ;
+    /// ```
+    ///
+    /// Default: [`IntegerRadix::Decimal`]
+    #[must_use]
+    pub fn integer_radix(mut self, integer_radix: IntegerRadix) -> Self {
+        self.integer_radix = integer_radix;
+
+        self
+    }
 }
 
 impl Default for PrettyConfig {
@@ -370,6 +412,7 @@ impl Default for PrettyConfig {
             compact_structs: false,
             compact_maps: false,
             number_suffixes: false,
+            integer_radix: IntegerRadix::Decimal,
             path_meta: None,
         }
     }
@@ -486,6 +529,14 @@ impl<W: fmt::Write> Serializer<W> {
         self.pretty
             .as_ref()
             .map_or(false, |(ref config, _)| config.number_suffixes)
+    }
+
+    fn integer_radix(&self) -> IntegerRadix {
+        self.pretty
+            .as_ref()
+            .map_or(IntegerRadix::Decimal, |(ref config, _)| {
+                config.integer_radix
+            })
     }
 
     fn extensions(&self) -> Extensions {
@@ -605,22 +656,41 @@ impl<W: fmt::Write> Serializer<W> {
     }
 
     fn serialize_sint(&mut self, value: impl Into<LargeSInt>, suffix: &str) -> Result<()> {
-        // TODO optimize
-        write!(self.output, "{}", value.into())?;
+        let value = value.into();
+        let radix = self.integer_radix();
+        match radix {
+            IntegerRadix::Decimal => write!(self.output, "{value}")?,
+            _ if value < 0 => {
+                write!(self.output, "-")?;
+                self.serialize_uint_digits(value.unsigned_abs(), radix)?;
+            }
+            _ => self.serialize_uint_digits(value.unsigned_abs(), radix)?,
+        }
 
         if self.number_suffixes() {
-            write!(self.output, "{}", suffix)?;
+            write!(self.output, "{suffix}")?;
         }
 
         Ok(())
     }
 
     fn serialize_uint(&mut self, value: impl Into<LargeUInt>, suffix: &str) -> Result<()> {
-        // TODO optimize
-        write!(self.output, "{}", value.into())?;
+        self.serialize_uint_digits(value.into(), self.integer_radix())?;
 
         if self.number_suffixes() {
-            write!(self.output, "{}", suffix)?;
+            write!(self.output, "{suffix}")?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize_uint_digits(&mut self, value: LargeUInt, radix: IntegerRadix) -> Result<()> {
+        // TODO optimize
+        match radix {
+            IntegerRadix::Decimal => write!(self.output, "{value}")?,
+            IntegerRadix::Binary => write!(self.output, "0b{value:b}")?,
+            IntegerRadix::Octal => write!(self.output, "0o{value:o}")?,
+            IntegerRadix::Hexadecimal => write!(self.output, "0x{value:x}")?,
         }
 
         Ok(())
